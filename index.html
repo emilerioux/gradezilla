@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+  <title>Gradezilla</title>
+  <link rel="stylesheet" href="style.css?v=1">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon.svg">
+  <link rel="apple-touch-icon" href="icons/icon.svg">
+  <meta name="theme-color" content="#1f8a4c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+</head>
+<body>
+  <header>
+    <h1>
+      <svg class="brand-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path fill="currentColor" d="M12 2 1 7l11 5 9-4.09V17h2V7L12 2zM5 13.18v3.5C5 18.55 8.13 20 12 20s7-1.45 7-3.32v-3.5l-7 3.18-7-3.18z"/>
+      </svg>
+      Gradezilla
+    </h1>
+    <p id="tagline"></p>
+  </header>
+
+  <main>
+    <!-- ===== COURS ===== -->
+    <section id="view-courses" class="view active">
+      <div class="session-bar">
+        <select id="session-select" aria-label="Session"></select>
+        <button type="button" id="session-menu-btn" class="icon-btn" aria-label="Options de session">&#9881;</button>
+      </div>
+      <div id="session-summary" class="summary-card"></div>
+      <div id="course-list"></div>
+      <button type="button" id="add-course-btn" class="add-btn">+ Ajouter un cours</button>
+    </section>
+
+    <!-- ===== DATES ===== -->
+    <section id="view-dates" class="view">
+      <h2 class="view-title">Échéances à venir</h2>
+      <div id="dates-list"></div>
+    </section>
+
+    <!-- ===== IMPORT ===== -->
+    <section id="view-import" class="view">
+      <h2 class="view-title">Importer un document</h2>
+      <p class="hint">Dépose un <strong>syllabus</strong> (structure du cours) ou un <strong>relevé de notes</strong> (Moodle, feuille corrigée). Gradezilla lit le document et pré-remplit le cours ; tu complètes ce qui manque à la main.</p>
+
+      <div id="drop-zone" class="drop-zone">
+        <p class="drop-zone-main">Glisse un fichier ici</p>
+        <p class="drop-zone-sub">PDF · photo/image · Word (.docx)</p>
+        <button type="button" id="import-pick-btn" class="secondary-btn">Choisir un fichier</button>
+        <input type="file" id="import-file" accept=".pdf,.docx,.txt,image/*" multiple class="hidden">
+      </div>
+
+      <div id="import-file-chips" class="chips"></div>
+
+      <label class="field-label" for="import-text">…ou colle le texte directement</label>
+      <textarea id="import-text" rows="5" placeholder="Colle ici le texte du syllabus ou du relevé"></textarea>
+
+      <button type="button" id="import-analyze-btn">Analyser avec Claude</button>
+      <div id="import-status" class="import-status hidden"></div>
+      <div id="import-review" class="import-review hidden"></div>
+    </section>
+
+    <!-- ===== GPA ===== -->
+    <section id="view-gpa" class="view">
+      <h2 class="view-title">GPA cumulatif</h2>
+      <div id="gpa-summary" class="summary-card"></div>
+      <label class="checkbox-row">
+        <input type="checkbox" id="gpa-include-projected" checked>
+        Inclure les notes projetées (sessions en cours)
+      </label>
+      <div id="gpa-sessions"></div>
+      <button type="button" id="add-past-course-btn" class="secondary-btn">+ Cours antérieur / externe</button>
+    </section>
+
+    <!-- ===== RÉGLAGES ===== -->
+    <section id="view-settings" class="view">
+      <h2 class="view-title">Réglages</h2>
+
+      <div class="settings-card">
+        <h3>Clé API Claude</h3>
+        <p class="hint">Utilisée seulement pour l'analyse de documents (quelques ¢ par syllabus). Stockée uniquement sur cet appareil, jamais envoyée ailleurs qu'à l'API Anthropic.</p>
+        <input type="password" id="api-key-input" placeholder="sk-ant-..." autocomplete="off">
+        <div class="field">
+          <label for="model-select">Modèle</label>
+          <select id="model-select">
+            <option value="claude-sonnet-5">Sonnet 5 — recommandé</option>
+            <option value="claude-haiku-4-5-20251001">Haiku 4.5 — moins cher</option>
+          </select>
+        </div>
+        <div class="form-actions">
+          <button type="button" id="save-settings-btn">Enregistrer</button>
+          <button type="button" id="test-api-btn" class="secondary-btn">Tester la clé</button>
+        </div>
+      </div>
+
+      <div class="settings-card">
+        <h3>Apparence</h3>
+        <label class="switch-row" for="dark-toggle">
+          <span>Mode sombre</span>
+          <input type="checkbox" id="dark-toggle">
+          <span class="switch"></span>
+        </label>
+      </div>
+
+      <div class="settings-card">
+        <h3>Barème par défaut (% → lettre)</h3>
+        <p class="hint">Appliqué aux nouveaux cours. Chaque cours garde ensuite son propre barème — à Concordia, chaque prof fixe ses seuils.</p>
+        <div id="default-scale-editor" class="scale-editor"></div>
+        <button type="button" id="reset-scale-btn" class="secondary-btn">Réinitialiser le barème</button>
+      </div>
+
+      <div class="settings-card">
+        <h3>Sauvegarde</h3>
+        <p class="hint">Tes données vivent seulement sur cet appareil. Exporte de temps en temps.</p>
+        <div class="form-actions">
+          <button type="button" id="export-btn">Exporter (.json)</button>
+          <label class="secondary-btn file-label" for="backup-file">Importer .json</label>
+          <input type="file" id="backup-file" accept="application/json" class="hidden">
+        </div>
+      </div>
+
+      <p class="version-note">Gradezilla v1 · 🦖 nourri aux syllabus</p>
+    </section>
+  </main>
+
+  <nav id="bottom-nav">
+    <button type="button" class="nav-btn active" data-view="view-courses"><span class="nav-ico">🎓</span><span>Cours</span></button>
+    <button type="button" class="nav-btn" data-view="view-dates"><span class="nav-ico">📅</span><span>Dates</span></button>
+    <button type="button" class="nav-btn" data-view="view-import"><span class="nav-ico">📄</span><span>Import</span></button>
+    <button type="button" class="nav-btn" data-view="view-gpa"><span class="nav-ico">📊</span><span>GPA</span></button>
+    <button type="button" class="nav-btn" data-view="view-settings"><span class="nav-ico">⚙️</span><span>Réglages</span></button>
+  </nav>
+
+  <!-- Overlay: detail d'un cours -->
+  <div id="course-detail" class="overlay hidden">
+    <div class="overlay-panel">
+      <div class="overlay-head">
+        <button type="button" id="course-detail-close" class="overlay-close" aria-label="Fermer">&#8592;</button>
+        <span id="course-detail-heading"></span>
+      </div>
+      <div id="course-detail-body" class="overlay-scroll"></div>
+    </div>
+  </div>
+
+  <!-- Overlay generique -->
+  <div id="modal" class="overlay hidden">
+    <div class="modal-card">
+      <div class="overlay-head">
+        <h3 id="modal-title"></h3>
+        <button type="button" id="modal-close" class="overlay-close" aria-label="Fermer">&#10005;</button>
+      </div>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js?v=1"></script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22a05a"/>
+      <stop offset="1" stop-color="#0e5f34"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <!-- dos + crete -->
+  <g fill="#0c4a29">
+    <path d="M150 232 L182 150 L210 236 Z"/>
+    <path d="M214 224 L256 128 L296 230 Z"/>
+    <path d="M300 234 L338 156 L366 236 Z"/>
+  </g>
+  <!-- tete -->
+  <rect x="138" y="212" width="236" height="182" rx="58" fill="#37c877"/>
+  <!-- yeux -->
+  <circle cx="203" cy="282" r="31" fill="#ffffff"/>
+  <circle cx="309" cy="282" r="31" fill="#ffffff"/>
+  <circle cx="211" cy="289" r="13" fill="#10331d"/>
+  <circle cx="301" cy="289" r="13" fill="#10331d"/>
+  <!-- bouche + dents -->
+  <path d="M172 342 H340 V356 Q256 408 172 356 Z" fill="#0c3c21"/>
+  <g fill="#ffffff">
+    <path d="M184 344 l14 26 l12 -26 Z"/>
+    <path d="M224 346 l15 30 l14 -30 Z"/>
+    <path d="M270 346 l14 30 l16 -30 Z"/>
+    <path d="M314 344 l6 24 l14 -22 Z"/>
+  </g>
+  <!-- chapeau de graduation -->
+  <rect x="176" y="176" width="160" height="26" rx="6" fill="#16212c"/>
+  <polygon points="256,104 404,152 256,200 108,152" fill="#1b2a38"/>
+  <polygon points="256,120 372,152 256,184 140,152" fill="#243545"/>
+  <path d="M372 152 v44 q0 8 -8 10" stroke="#f6c445" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <circle cx="364" cy="212" r="9" fill="#f6c445"/>
+</svg>
