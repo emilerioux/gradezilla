@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
   <title>Gradezilla</title>
-  <link rel="stylesheet" href="style.css?v=5">
+  <link rel="stylesheet" href="style.css?v=6">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icons/icon.svg">
   <link rel="apple-touch-icon" href="icons/icon.svg">
@@ -83,7 +83,7 @@
         <h3>Analyse intelligente <span class="badge-opt">optionnel</span></h3>
         <p class="hint">Sans clé, l'import de syllabus marche déjà (analyse locale par motifs, sur texte ou PDF). Une clé <strong>Google Gemini</strong> — <strong>gratuite, sans carte de crédit</strong> — donne une lecture bien plus fiable et gère les <strong>photos</strong> et les <strong>PDF scannés</strong>.</p>
         <p class="hint">Crée-la sur <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. Elle reste sur cet appareil. Note : sur l'offre gratuite, Google peut utiliser le contenu envoyé pour améliorer ses services — évite les documents sensibles.</p>
-        <input type="password" id="gemini-key-input" placeholder="AIza…" autocomplete="off">
+        <input type="password" id="gemini-key-input" placeholder="AIza… ou AQ.…" autocomplete="off">
         <div class="form-actions">
           <button type="button" id="gemini-save-btn">Enregistrer</button>
           <button type="button" id="gemini-test-btn" class="secondary-btn">Tester</button>
@@ -175,6 +175,6 @@
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>

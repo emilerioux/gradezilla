@@ -1325,8 +1325,11 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
 function cleanKey(s) { return String(s || "").trim().replace(/^["']|["']$/g, "").trim(); }
 
 function geminiKeyHint(msg) {
-  if (/API_KEY_INVALID|api key not valid|API_KEY_HTTP_REFERRER_BLOCKED|invalid api key/i.test(msg)) {
-    return "Clé Gemini refusée. Elle doit venir de aistudio.google.com/apikey (bouton « Create API key »), collée sans espace ni guillemets. Si tu l'as créée dans un projet Google Cloud, ouvre-le et active l'API « Generative Language ». Vérifie aussi qu'aucune restriction de referrer/API n'est posée sur la clé.";
+  if (/API_KEY_HTTP_REFERRER_BLOCKED|referer|referrer/i.test(msg)) {
+    return "Ta clé a une restriction « sites web ». Dans Google Cloud → Identifiants → ta clé → « Restrictions relatives aux applications » → mets « Aucune », ou ajoute https://emilerioux.github.io/*";
+  }
+  if (/API_KEY_INVALID|api key not valid|invalid api key/i.test(msg)) {
+    return "Clé refusée. Copie-la en entier depuis aistudio.google.com/apikey (bouton « Copier la clé »), sans espace ni guillemets. Si elle a été créée dans un projet Google Cloud existant, active l'API « Generative Language » sur ce projet, ou crée une nouvelle clé « dans un nouveau projet ».";
   }
   if (/SERVICE_DISABLED|has not been used|is disabled/i.test(msg)) {
     return "L'API « Generative Language » n'est pas activée pour le projet de cette clé. Active-la dans Google Cloud, ou crée une nouvelle clé via aistudio.google.com/apikey (elle l'active automatiquement).";
@@ -1336,7 +1339,7 @@ function geminiKeyHint(msg) {
 }
 
 async function geminiListModels(key) {
-  const res = await fetch(`${GEMINI_BASE}/models?key=${encodeURIComponent(key)}&pageSize=200`);
+  const res = await fetch(`${GEMINI_BASE}/models?pageSize=200`, { headers: { "x-goog-api-key": key } });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const m = (data.error && data.error.message) || `HTTP ${res.status}`;
@@ -1355,9 +1358,9 @@ function pickGeminiModel(models) {
 }
 
 async function geminiGenerate(key, model, parts) {
-  const res = await fetch(`${GEMINI_BASE}/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
+  const res = await fetch(`${GEMINI_BASE}/models/${model}:generateContent`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-goog-api-key": key },
     body: JSON.stringify({ contents: [{ parts }], generationConfig: { responseMimeType: "application/json", temperature: 0 } }),
   });
   const data = await res.json().catch(() => ({}));
