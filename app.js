@@ -105,6 +105,7 @@ function defaultDB() {
     past: [],
     settings: {
       apiKey: "", model: "claude-sonnet-5", dark: false, gpaIncludeProjected: true,
+      tutorialDone: false,
       defaultScale: DEFAULT_SCALE.map((x) => ({ ...x })),
     },
   };
@@ -118,7 +119,7 @@ function loadDB() {
     // garde-fous minimaux
     if (!parsed.sessions || !Array.isArray(parsed.sessions) || !parsed.sessions.length) return defaultDB();
     parsed.past = parsed.past || [];
-    parsed.settings = Object.assign({ apiKey: "", model: "claude-sonnet-5", dark: false, gpaIncludeProjected: true }, parsed.settings || {});
+    parsed.settings = Object.assign({ apiKey: "", model: "claude-sonnet-5", dark: false, gpaIncludeProjected: true, tutorialDone: false }, parsed.settings || {});
     if (!Array.isArray(parsed.settings.defaultScale) || !parsed.settings.defaultScale.length) {
       parsed.settings.defaultScale = DEFAULT_SCALE.map((x) => ({ ...x }));
     }
@@ -1336,6 +1337,65 @@ function renderReview(data) {
 }
 
 /* ============================================================
+   Tutoriel de premier lancement
+   ============================================================ */
+const TUTO_STEPS = [
+  {
+    emoji: "🦖", title: "Bienvenue dans Gradezilla",
+    body: `Gradezilla suit tes notes et te dit <strong>exactement ce qu'il te faut</strong> pour viser une lettre. Petit tour en 5 étapes — tu peux le passer à tout moment.`,
+  },
+  {
+    emoji: "🎓", title: "Onglet Cours",
+    body: `Tes cours de la session. La pastille de droite montre ta <strong>lettre actuelle</strong>. Sous chaque cours : « pour A-, besoin de <strong>X%</strong> sur ce qui reste ».`,
+  },
+  {
+    emoji: "🎯", title: "Ouvre un cours",
+    body: `Ajoute les <strong>composantes</strong> (Devoirs 20%, Midterm 25%, Final 40%…) et entre tes notes en %. Le bloc « Note nécessaire » se recalcule seul, avec la fourchette min/max. Le barème % → lettre est ajustable par cours, et tu peux définir des règles « garde 4/5 » ou « retire la pire ».`,
+  },
+  {
+    emoji: "📄", title: "Import de documents",
+    body: `Dépose un <strong>syllabus</strong> (PDF, photo, .docx) ou un <strong>relevé de notes</strong> : Gradezilla lit le document et pré-remplit le cours. Ce qui manque est signalé en orange, à compléter à la main. Nécessite ta <strong>clé API Claude</strong> (Réglages).`,
+  },
+  {
+    emoji: "📊", title: "Dates, GPA & sauvegarde",
+    body: `L'onglet <strong>Dates</strong> liste tes échéances par date. L'onglet <strong>GPA</strong> calcule ton cumulatif (ajoute tes cours antérieurs). Tout est stocké sur cet appareil seulement — pense à <strong>exporter un .json</strong> de temps en temps.`,
+  },
+  {
+    emoji: "✅", title: "C'est parti !",
+    body: `Tu peux relancer ce tutoriel n'importe quand depuis <strong>Réglages → Aide</strong>.`,
+  },
+];
+let tutoStep = 0;
+
+function renderTuto() {
+  const s = TUTO_STEPS[tutoStep];
+  $("#tuto-emoji").textContent = s.emoji;
+  $("#tuto-title").textContent = s.title;
+  $("#tuto-body").innerHTML = s.body;
+  $("#tuto-dots").innerHTML = TUTO_STEPS.map((_, i) => `<span class="${i === tutoStep ? "on" : ""}"></span>`).join("");
+  $("#tuto-prev").style.visibility = tutoStep === 0 ? "hidden" : "visible";
+  $("#tuto-next").textContent = tutoStep === TUTO_STEPS.length - 1 ? "Commencer" : "Suivant";
+}
+function openTutorial() {
+  tutoStep = 0;
+  renderTuto();
+  $("#tutorial").classList.remove("hidden");
+  document.body.classList.add("no-scroll");
+}
+function closeTutorial(markDone) {
+  $("#tutorial").classList.add("hidden");
+  document.body.classList.remove("no-scroll");
+  if (markDone && !db.settings.tutorialDone) { db.settings.tutorialDone = true; saveDB(); }
+}
+$("#tuto-prev").onclick = () => { if (tutoStep > 0) { tutoStep--; renderTuto(); } };
+$("#tuto-next").onclick = () => {
+  if (tutoStep < TUTO_STEPS.length - 1) { tutoStep++; renderTuto(); }
+  else closeTutorial(true);
+};
+$("#tuto-skip").onclick = () => closeTutorial(true);
+$("#replay-tuto-btn").onclick = () => openTutorial();
+
+/* ============================================================
    Navigation
    ============================================================ */
 function switchView(id) {
@@ -1352,6 +1412,8 @@ $$("#bottom-nav .nav-btn").forEach((b) => b.addEventListener("click", () => swit
    ============================================================ */
 $("#tagline").textContent = TAGLINES[Math.floor(Math.random() * TAGLINES.length)];
 switchView("view-courses");
+
+if (!db.settings.tutorialDone) openTutorial();
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));

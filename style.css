@@ -501,6 +501,31 @@ body.dark .chip { color: var(--accent); }
 .review-comps { margin: 6px 0; padding-left: 18px; font-size: .84rem; }
 .review-comps li { margin: 3px 0; }
 
+/* ---- tutoriel ---- */
+.tuto-card {
+  background: var(--card);
+  border-radius: 18px;
+  width: 100%;
+  max-width: 420px;
+  margin: auto 16px;
+  align-self: center;
+  padding: 24px 20px 18px;
+  text-align: center;
+  max-height: 88vh;
+  overflow-y: auto;
+}
+.tuto-emoji { font-size: 2.6rem; line-height: 1; }
+.tuto-card h2 { margin: 10px 0 10px; font-size: 1.15rem; }
+.tuto-body { font-size: .92rem; line-height: 1.5; text-align: left; }
+.tuto-body strong { color: var(--accent-strong); }
+body.dark .tuto-body strong { color: var(--accent); }
+.tuto-dots { display: flex; gap: 6px; justify-content: center; margin: 18px 0 14px; }
+.tuto-dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
+.tuto-dots span.on { background: var(--accent); }
+.tuto-actions { display: flex; gap: 8px; }
+.tuto-actions button { flex: 1; }
+#tuto-skip { margin-top: 12px; display: inline-block; }
+
 /* ---- toast ---- */
 .toast {
   position: fixed;
