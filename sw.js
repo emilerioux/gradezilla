@@ -1,13 +1,14 @@
 // Service worker "network-first" : quand tu es en ligne, tu as TOUJOURS la derniere version.
 // Le cache ne sert que de secours hors-ligne. Plus besoin de vider le cache a la main.
-const CACHE_NAME = "gradezilla-v7";
+const CACHE_NAME = "gradezilla-v8";
 const CORE = [
   "./",
   "./index.html",
-  "./style.css?v=7",
-  "./app.js?v=7",
+  "./style.css?v=8",
+  "./app.js?v=8",
   "./manifest.json",
   "./icons/icon.svg",
+  "./icons/icon-180.png",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
 ];

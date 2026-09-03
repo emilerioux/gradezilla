@@ -7,10 +7,10 @@
   </defs>
   <rect width="512" height="512" rx="116" fill="url(#bg)"/>
   <!-- dos + crete -->
-  <g fill="#0c4a29">
-    <path d="M150 232 L182 150 L210 236 Z"/>
-    <path d="M214 224 L256 128 L296 230 Z"/>
-    <path d="M300 234 L338 156 L366 236 Z"/>
+  <g fill="#8fe8bb" stroke="#0c4a29" stroke-width="6" stroke-linejoin="round">
+    <path d="M148 236 L182 138 L212 240 Z"/>
+    <path d="M214 232 L256 116 L300 236 Z"/>
+    <path d="M302 240 L340 146 L372 240 Z"/>
   </g>
   <!-- tete -->
   <rect x="138" y="212" width="236" height="182" rx="58" fill="#37c877"/>

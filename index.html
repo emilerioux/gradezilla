@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
   <title>Gradezilla</title>
-  <link rel="stylesheet" href="style.css?v=7">
+  <link rel="stylesheet" href="style.css?v=8">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icons/icon.svg">
-  <link rel="apple-touch-icon" href="icons/icon.svg">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
   <meta name="theme-color" content="#1f8a4c">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -30,6 +30,7 @@
         <select id="session-select" aria-label="Session"></select>
         <button type="button" id="session-menu-btn" class="icon-btn" aria-label="Options de session">&#9881;</button>
       </div>
+      <div id="courses-banners"></div>
       <div id="session-summary" class="summary-card"></div>
       <div id="course-list"></div>
       <button type="button" id="add-course-btn" class="add-btn">+ Ajouter un cours</button>
@@ -37,14 +38,15 @@
 
     <!-- ===== DATES ===== -->
     <section id="view-dates" class="view">
-      <h2 class="view-title">Échéances à venir</h2>
+      <h2 class="view-title">Travaux &amp; examens</h2>
       <div id="dates-list"></div>
     </section>
 
     <!-- ===== IMPORT ===== -->
     <section id="view-import" class="view">
       <h2 class="view-title">Importer un document</h2>
-      <p class="hint">Dépose un <strong>syllabus</strong> ou colle son texte. Gradezilla repère le sigle, les composantes, les pondérations et le barème, puis pré-remplit le cours — tu complètes le reste à la main. <strong>Par défaut : analyse locale, gratuite, rien n'est envoyé.</strong> Avec une clé Gemini (Réglages) : lecture plus fiable + photos et PDF scannés.</p>
+      <p class="hint">Dépose un <strong>syllabus</strong> ou colle son texte. Gradezilla repère le sigle, les composantes, les pondérations et le barème, puis pré-remplit le cours — tu ajustes avant de valider.</p>
+      <div id="import-mode" class="import-mode"></div>
 
       <div id="drop-zone" class="drop-zone">
         <p class="drop-zone-main">Glisse un fichier ici</p>
@@ -117,6 +119,7 @@
       <div class="settings-card">
         <h3>Sauvegarde</h3>
         <p class="hint">Tes données vivent seulement sur cet appareil. Exporte de temps en temps.</p>
+        <p class="hint" id="last-export-line"></p>
         <div class="form-actions">
           <button type="button" id="export-btn">Exporter (.json)</button>
           <label class="secondary-btn file-label" for="backup-file">Importer .json</label>
@@ -124,7 +127,7 @@
         </div>
       </div>
 
-      <p class="version-note">Gradezilla v7 · 🦖 nourri aux syllabus</p>
+      <p class="version-note">Gradezilla v8 · 🦖 nourri aux syllabus</p>
     </section>
   </main>
 
@@ -175,6 +178,6 @@
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="app.js?v=7"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>

@@ -104,7 +104,7 @@ function defaultDB() {
     sessions: [session],
     past: [],
     settings: {
-      dark: false, gpaIncludeProjected: true, tutorialDone: false, geminiKey: "", geminiModel: "",
+      dark: false, gpaIncludeProjected: true, tutorialDone: false, geminiKey: "", geminiModel: "", lastExport: null,
       defaultScale: DEFAULT_SCALE.map((x) => ({ ...x })),
     },
   };
@@ -118,7 +118,7 @@ function loadDB() {
     // garde-fous minimaux
     if (!parsed.sessions || !Array.isArray(parsed.sessions) || !parsed.sessions.length) return defaultDB();
     parsed.past = parsed.past || [];
-    parsed.settings = Object.assign({ dark: false, gpaIncludeProjected: true, tutorialDone: false, geminiKey: "", geminiModel: "" }, parsed.settings || {});
+    parsed.settings = Object.assign({ dark: false, gpaIncludeProjected: true, tutorialDone: false, geminiKey: "", geminiModel: "", lastExport: null }, parsed.settings || {});
     if (!Array.isArray(parsed.settings.defaultScale) || !parsed.settings.defaultScale.length) {
       parsed.settings.defaultScale = DEFAULT_SCALE.map((x) => ({ ...x }));
     }
@@ -326,6 +326,17 @@ function cumulativeGPA(includeProjected) {
    Rendu
    ============================================================ */
 let activeView = "view-courses";
+const notesOpen = new Set();      // ids d'éléments dont la remarque est ouverte
+let lastImport = null;            // { type:"new"|"merge", courseId, code, before?, beforeFileIds? }
+let backupNagDismissed = false;   // rappel de sauvegarde masqué pour cette session
+
+function hasRealData() {
+  if (db.past.length) return true;
+  for (const s of db.sessions)
+    for (const c of s.courses)
+      if (c.components.some((comp) => comp.items.some((it) => num(it.grade) !== null))) return true;
+  return false;
+}
 
 function toast(msg) {
   const t = $("#toast");
@@ -343,12 +354,81 @@ function render() {
   applyTheme();
   if (activeView === "view-courses") renderCourses();
   else if (activeView === "view-dates") renderDates();
+  else if (activeView === "view-import") renderImport();
   else if (activeView === "view-gpa") renderGPA();
   else if (activeView === "view-settings") renderSettings();
 }
 
+/* ---------- bandeaux du haut (undo import + rappel de sauvegarde) ---------- */
+function renderCoursesBanners() {
+  const el = $("#courses-banners");
+  if (!el) return;
+  let h = "";
+  if (lastImport) {
+    h += `<div class="notice-bar">
+      <span>Import : <strong>${esc(lastImport.code || "cours")}</strong> ${lastImport.type === "new" ? "ajouté" : "fusionné"}</span>
+      <span class="notice-actions"><button type="button" id="undo-import-btn" class="mini-link">Annuler</button>
+      <button type="button" id="dismiss-undo-btn" class="mini-del" aria-label="OK">&#10005;</button></span>
+    </div>`;
+  }
+  const le = db.settings.lastExport;
+  const stale = !le || (Date.now() - new Date(le).getTime()) > 14 * 86400000;
+  if (!backupNagDismissed && stale && hasRealData()) {
+    h += `<div class="notice-bar warn">
+      <span>💾 Sauvegarde tes données — elles ne sont que sur ce téléphone.</span>
+      <span class="notice-actions"><button type="button" id="nag-export-btn" class="mini-link">Exporter</button>
+      <button type="button" id="nag-dismiss-btn" class="mini-del" aria-label="Plus tard">&#10005;</button></span>
+    </div>`;
+  }
+  el.innerHTML = h;
+  const set = (id, fn) => { const b = $("#" + id); if (b) b.onclick = fn; };
+  set("undo-import-btn", undoLastImport);
+  set("dismiss-undo-btn", () => { lastImport = null; renderCoursesBanners(); });
+  set("nag-export-btn", () => $("#export-btn").click());
+  set("nag-dismiss-btn", () => { backupNagDismissed = true; renderCoursesBanners(); });
+}
+
+async function undoLastImport() {
+  const li = lastImport;
+  if (!li) return;
+  const fc = findCourse(li.courseId);
+  if (fc) {
+    if (li.type === "new") {
+      for (const f of fc.course.files) await idbDelete(f.id).catch(() => {});
+      fc.session.courses = fc.session.courses.filter((c) => c.id !== li.courseId);
+      if (openCourseId === li.courseId) closeCourse();
+    } else {
+      const newIds = fc.course.files.map((f) => f.id).filter((id) => !li.beforeFileIds.includes(id));
+      for (const id of newIds) await idbDelete(id).catch(() => {});
+      for (const k of Object.keys(fc.course)) delete fc.course[k];
+      Object.assign(fc.course, li.before);
+      if (openCourseId === li.courseId) openCourse(li.courseId);
+    }
+  }
+  lastImport = null;
+  saveDB();
+  render();
+  toast("Import annulé");
+}
+
+/* ---------- vue IMPORT : indicateur de mode ---------- */
+function renderImport() {
+  const el = $("#import-mode");
+  const btn = $("#import-analyze-btn");
+  if (db.settings.geminiKey) {
+    if (el) el.innerHTML = `<span class="mode-badge gemini">Mode : Gemini (IA)</span> lecture fiable + photos et PDF scannés`;
+    if (btn) btn.textContent = "Analyser avec Gemini";
+  } else {
+    if (el) el.innerHTML = `<span class="mode-badge local">Mode : local</span> gratuit et hors-ligne · <button type="button" class="mini-link" id="import-goto-gemini">activer Gemini</button>`;
+    if (btn) btn.textContent = "Analyser le document";
+    const g = $("#import-goto-gemini");
+    if (g) g.onclick = () => switchView("view-settings");
+  }
+}
+
 /* ---------- vue COURS ---------- */
 function renderCourses() {
+  renderCoursesBanners();
   const sel = $("#session-select");
   sel.innerHTML = db.sessions.map((s) =>
     `<option value="${s.id}" ${s.id === db.currentSessionId ? "selected" : ""}>${esc(s.name)}${s.archived ? " (archivee)" : ""}</option>`
@@ -415,47 +495,53 @@ function slotWeight(component) {
 
 function renderDates() {
   const session = currentSession();
-  const rows = [];
+  const all = [];
   for (const c of session.courses) {
     for (const comp of c.components) {
       for (const it of comp.items) {
         if (!it.date) continue;
-        if (num(it.grade) !== null) continue; // deja fait
-        rows.push({
-          date: it.date,
-          d: daysUntil(it.date),
-          code: c.code || "Sans nom",
-          comp: comp.name,
-          item: it.name || comp.name,
-          weight: slotWeight(comp),
+        all.push({
+          date: it.date, d: daysUntil(it.date),
+          code: c.code || "Sans nom", comp: comp.name, item: it.name || comp.name,
+          weight: slotWeight(comp), grade: num(it.grade), max: num(it.max) || 100,
         });
       }
     }
   }
-  rows.sort((a, b) => a.date.localeCompare(b.date));
-
   const el = $("#dates-list");
-  if (!rows.length) {
-    el.innerHTML = `<p class="empty">Aucune échéance à venir dans « ${esc(session.name)} ».<br>Ajoute des dates dans tes cours ou importe un syllabus.</p>`;
+  if (!all.length) {
+    el.innerHTML = `<p class="empty">Aucune date dans « ${esc(session.name)} ».<br>Ajoute des dates dans tes cours ou importe un syllabus.</p>`;
     return;
   }
-  const bucket = (r) => (r.d < 0 ? "En retard" : r.d <= 7 ? "Cette semaine" : r.d <= 21 ? "Dans 3 semaines" : "Plus tard");
-  let html = "", lastBucket = null;
-  for (const r of rows) {
-    const b = bucket(r);
-    if (b !== lastBucket) { html += `<h3 class="dates-bucket">${b}</h3>`; lastBucket = b; }
+  const pending = all.filter((r) => r.grade === null).sort((a, b) => a.date.localeCompare(b.date));
+  const done = all.filter((r) => r.grade !== null).sort((a, b) => b.date.localeCompare(a.date));
+  const overdue = pending.filter((r) => r.d < 0);
+  const upcoming = pending.filter((r) => r.d >= 0);
+
+  const rowHTML = (r, kind) => {
     const when = r.d < 0 ? `il y a ${-r.d} j` : r.d === 0 ? "aujourd'hui" : r.d === 1 ? "demain" : `dans ${r.d} j`;
-    html += `
-      <div class="date-row ${r.d < 0 ? "overdue" : r.d <= 7 ? "soon" : ""}">
-        <div class="date-main">
-          <span class="date-item">${esc(r.item)}</span>
-          <span class="date-course">${esc(r.code)} · ${esc(r.comp)}</span>
-        </div>
-        <div class="date-side">
-          <span class="date-when">${when}</span>
-          <span class="date-weight">~${fmt(r.weight)}%</span>
-        </div>
-      </div>`;
+    const side = kind === "done"
+      ? `<span class="date-when ok">✓ ${fmt(r.grade)}/${fmt(r.max)}</span><span class="date-weight">${esc(r.date)}</span>`
+      : `<span class="date-when">${when}</span><span class="date-weight">~${fmt(r.weight)}%</span>`;
+    return `<div class="date-row ${kind === "done" ? "done" : r.d < 0 ? "overdue" : r.d <= 7 ? "soon" : ""}">
+      <div class="date-main"><span class="date-item">${esc(r.item)}</span><span class="date-course">${esc(r.code)} · ${esc(r.comp)}</span></div>
+      <div class="date-side">${side}</div></div>`;
+  };
+
+  let html = "";
+  if (overdue.length) html += `<h3 class="dates-bucket">En retard / non noté</h3>` + overdue.map((r) => rowHTML(r, "pending")).join("");
+  if (upcoming.length) {
+    const bucket = (r) => (r.d <= 7 ? "Cette semaine" : r.d <= 21 ? "Dans 3 semaines" : "Plus tard");
+    let last = null;
+    for (const r of upcoming) {
+      const b = bucket(r);
+      if (b !== last) { html += `<h3 class="dates-bucket">${b}</h3>`; last = b; }
+      html += rowHTML(r, "pending");
+    }
+  }
+  if (!overdue.length && !upcoming.length) html += `<p class="hint">Rien à venir — tout ce qui a une date est fait. 🎉</p>`;
+  if (done.length) {
+    html += `<details class="dates-done"><summary>Fait (${done.length})</summary>${done.map((r) => rowHTML(r, "done")).join("")}</details>`;
   }
   el.innerHTML = html;
 }
@@ -514,6 +600,17 @@ function renderSettings() {
   $("#dark-toggle").checked = !!db.settings.dark;
   $("#gemini-key-input").value = db.settings.geminiKey || "";
   renderScaleEditor($("#default-scale-editor"), db.settings.defaultScale, () => saveDB());
+  const le = db.settings.lastExport;
+  const line = $("#last-export-line");
+  if (line) {
+    if (!le) {
+      line.innerHTML = `<span class="bad">Jamais exporté.</span> Tes données ne vivent que sur cet appareil.`;
+    } else {
+      const days = Math.floor((Date.now() - new Date(le).getTime()) / 86400000);
+      const ago = days <= 0 ? "aujourd'hui" : days === 1 ? "hier" : `il y a ${days} j`;
+      line.innerHTML = `Dernière sauvegarde : ${le.slice(0, 10)} (${ago})` + (days > 14 ? ` <span class="bad">— pense à réexporter</span>` : "");
+    }
+  }
 }
 
 function renderScaleEditor(container, scale, onChange) {
@@ -581,15 +678,22 @@ function courseDetailHTML(c) {
     <div class="warn-line">Les pondérations totalisent <strong>${fmt(weightSum)}%</strong> (attendu 100%).</div>` : "";
 
   const comps = c.components.map((comp) => {
-    const rows = (comp.items.length ? comp.items : []).map((it) => `
+    const rows = (comp.items.length ? comp.items : []).map((it) => {
+      const showNote = !!it.note || notesOpen.has(it.id);
+      return `
       <tr data-comp="${comp.id}" data-item="${it.id}">
         <td><input type="text" class="cell-name" value="${esc(it.name)}" data-field="name" placeholder="Nom"></td>
         <td><input type="date" class="cell-date" value="${esc(it.date)}" data-field="date"></td>
         <td><input type="number" class="cell-grade" value="${it.grade ?? ""}" data-field="grade" placeholder="—" step="0.5"></td>
         <td class="cell-slash">/</td>
         <td><input type="number" class="cell-max" value="${it.max ?? 100}" data-field="max" step="1"></td>
-        <td><button type="button" class="mini-del" data-act="del-item" aria-label="Supprimer">&#10005;</button></td>
-      </tr>`).join("");
+        <td class="cell-acts">
+          <button type="button" class="mini-note ${showNote ? "on" : ""}" data-act="toggle-note" aria-label="Remarque">&#128221;</button>
+          <button type="button" class="mini-del" data-act="del-item" aria-label="Supprimer">&#10005;</button>
+        </td>
+      </tr>
+      ${showNote ? `<tr class="item-note-row" data-comp="${comp.id}" data-item="${it.id}"><td colspan="6"><input type="text" class="cell-note" data-field="note" value="${esc(it.note || "")}" placeholder="Remarque (ex: pas de calculatrice, salle H-110)"></td></tr>` : ""}`;
+    }).join("");
     return `
       <div class="comp-card" data-comp="${comp.id}">
         <div class="comp-head">
@@ -744,6 +848,7 @@ $("#course-detail-body").addEventListener("input", (e) => {
     else if (field === "date") it.date = t.value;
     else if (field === "grade") it.grade = t.value === "" ? null : num(t.value);
     else if (field === "max") it.max = num(t.value) ?? 100;
+    else if (field === "note") { it.note = t.value; saveDB(); return; }
     saveDB(); refreshCourseStats(); return;
   }
   if (["code", "title", "credits", "target", "instructor", "email", "room", "officeHours", "latePolicy"].includes(field)) {
@@ -788,6 +893,13 @@ $("#course-detail-body").addEventListener("click", async (e) => {
     const tr = btn.closest("tr[data-item]");
     const cp = c.components.find((x) => x.id === tr.dataset.comp);
     if (cp) { cp.items = cp.items.filter((x) => x.id !== tr.dataset.item); saveDB(); openCourse(c.id); }
+    return;
+  }
+  if (act === "toggle-note") {
+    const tr = btn.closest("tr[data-item]");
+    const id = tr.dataset.item;
+    if (notesOpen.has(id)) notesOpen.delete(id); else notesOpen.add(id);
+    openCourse(c.id);
     return;
   }
   if (act === "edit-rule" && comp) { editRuleModal(c, comp); return; }
@@ -1005,12 +1117,17 @@ $("#reset-scale-btn").onclick = () => {
 };
 
 $("#export-btn").onclick = () => {
+  db.settings.lastExport = new Date().toISOString();
+  saveDB();
   const blob = new Blob([JSON.stringify(db, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = `gradezilla-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  backupNagDismissed = true;
+  if (activeView === "view-settings") renderSettings();
+  toast("Données exportées");
 };
 $("#backup-file").addEventListener("change", (e) => {
   const f = e.target.files[0]; if (!f) return;
@@ -1172,7 +1289,7 @@ function parseSyllabusText(text) {
   if (codeM) {
     const after = flat.slice(codeM.index + codeM[0].length, codeM.index + codeM[0].length + 80);
     const tm = after.match(/^[\s:–—-]*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ ,&'/-]{3,60})/);
-    if (tm) title = tm[1].trim().replace(/\s+(section|sec\.?|fall|winter|automne|hiver|crn)\b.*$/i, "").trim();
+    if (tm) title = tm[1].trim().replace(/\s+(section|sec\.?|fall|winter|automne|hiver|crn|cr[ée]dits?|credits?|instructor|professeur|prof\.?|enseignant)\b.*$/i, "").trim();
   }
 
   // --- crédits, courriel, enseignant ---
@@ -1535,19 +1652,53 @@ function summarizeParsed(data) {
   return bits.join(" · ");
 }
 
-function renderReview(data) {
-  const review = $("#import-review");
-  const session = currentSession();
-  const missing = [...(data.missing || []), ...(data.uncertain || []).map((u) => "à vérifier : " + u)];
-  const compRows = (data.components || []).map((c) =>
-    `<li>${esc(c.name || "?")} — <strong>${c.weight ?? "?"}%</strong>${c.rule ? " · règle spéciale" : ""}${(c.items || []).length ? ` · ${c.items.length} élément(s)` : ""}</li>`
-  ).join("");
+function normReviewData(data) {
+  data.course = data.course || {};
+  data.components = (data.components || []).map((c) => ({
+    name: c.name || "", weight: num(c.weight) ?? "", rule: validRule(c.rule),
+    items: (c.items || []).map((it) => ({ name: it.name || "", date: validDate(it.date) })),
+  }));
+  data.grades = data.grades || [];
+  data.missing = data.missing || [];
+  data.uncertain = data.uncertain || [];
+  return data;
+}
 
-  review.innerHTML = `
-    <h3>Résultat de l'analyse</h3>
-    <p class="review-summary">${summarizeParsed(data)}</p>
-    ${compRows ? `<ul class="review-comps">${compRows}</ul>` : ""}
-    ${missing.length ? `<div class="missing-banner"><div class="missing-head"><strong>Manquant / à confirmer</strong></div><ul>${missing.map((m) => `<li>${esc(m)}</li>`).join("")}</ul><p class="hint">Tu pourras tout compléter à la main juste après.</p></div>` : ""}
+function reviewHTML(data) {
+  const co = data.course;
+  const wsum = data.components.reduce((s, c) => s + (num(c.weight) || 0), 0);
+  const missing = [...data.missing, ...data.uncertain.map((u) => "à vérifier : " + u)];
+  const session = currentSession();
+  const nGrades = data.grades.filter((g) => num(g.grade) !== null).length;
+  const comps = data.components.map((c, ci) => `
+    <div class="rv-comp" data-ci="${ci}">
+      <div class="rv-comp-head">
+        <input type="text" data-f="c-name" value="${esc(c.name)}" placeholder="Composante">
+        <span class="rv-w"><input type="number" data-f="c-weight" value="${c.weight}" step="1">%</span>
+        <button type="button" class="mini-del" data-act="rv-del-comp" aria-label="Supprimer">&#10005;</button>
+      </div>
+      ${c.rule ? `<div class="rv-rule">${ruleBadge(c.rule)}</div>` : ""}
+      ${c.items.map((it, ii) => `
+        <div class="rv-item" data-ii="${ii}">
+          <input type="text" data-f="i-name" value="${esc(it.name)}" placeholder="Élément">
+          <input type="date" data-f="i-date" value="${esc(it.date)}">
+          <button type="button" class="mini-del" data-act="rv-del-item" aria-label="Supprimer">&#10005;</button>
+        </div>`).join("")}
+      <button type="button" class="mini-add" data-act="rv-add-item">+ élément</button>
+    </div>`).join("");
+
+  return `
+    <h3>Résultat de l'analyse — vérifie et ajuste</h3>
+    <div class="rv-course">
+      <input type="text" data-f="code" value="${esc(co.code || "")}" placeholder="Sigle (MATH 205)">
+      <input type="text" data-f="title" value="${esc(co.title || "")}" placeholder="Titre (optionnel)">
+      <span class="rv-cr">Crédits <input type="number" data-f="credits" value="${co.credits ?? ""}" step="0.25" min="0"></span>
+    </div>
+    <div class="rv-w-sum ${Math.abs(wsum - 100) > 0.5 ? "bad" : "ok"}">Total pondérations : ${fmt(wsum)}%</div>
+    ${comps || '<p class="hint">Aucune composante détectée — ajoutes-en.</p>'}
+    <button type="button" class="mini-add" data-act="rv-add-comp">+ composante</button>
+    ${nGrades ? `<p class="hint">${nGrades} note(s) déjà obtenue(s) seront ajoutée(s).</p>` : ""}
+    ${missing.length ? `<div class="missing-banner"><div class="missing-head"><strong>Manquant / à confirmer</strong></div><ul>${missing.map((m) => `<li>${esc(m)}</li>`).join("")}</ul></div>` : ""}
     <div class="field">
       <label for="review-target">Ajouter à</label>
       <select id="review-target">
@@ -1556,38 +1707,100 @@ function renderReview(data) {
       </select>
     </div>
     <div class="form-actions">
-      <button type="button" id="review-commit">Importer et compléter</button>
+      <button type="button" id="review-commit">Importer</button>
       <button type="button" id="review-cancel" class="secondary-btn">Annuler</button>
     </div>`;
-  review.classList.remove("hidden");
-  review._data = data;
+}
 
-  $("#review-cancel").onclick = () => review.classList.add("hidden");
-  $("#review-commit").onclick = async () => {
-    const target = $("#review-target").value;
-    const session2 = currentSession();
-    let course;
-    if (target === "__new__") {
-      course = courseFromParsed(data);
-      session2.courses.push(course);
-    } else {
-      course = session2.courses.find((c) => c.id === target);
-      mergeParsedIntoCourse(course, data);
+function reRenderReview() {
+  const review = $("#import-review");
+  review.innerHTML = reviewHTML(review._data);
+}
+function refreshReviewSum() {
+  const review = $("#import-review");
+  const el = review.querySelector(".rv-w-sum");
+  if (!el) return;
+  const wsum = review._data.components.reduce((s, c) => s + (num(c.weight) || 0), 0);
+  el.textContent = `Total pondérations : ${fmt(wsum)}%`;
+  el.className = "rv-w-sum " + (Math.abs(wsum - 100) > 0.5 ? "bad" : "ok");
+}
+
+function renderReview(rawData) {
+  const data = normReviewData(rawData);
+  const review = $("#import-review");
+  review._data = data;
+  review.innerHTML = reviewHTML(data);
+  review.classList.remove("hidden");
+
+  review.oninput = (e) => {
+    const t = e.target, f = t.dataset.f;
+    if (!f) return;
+    const d = review._data;
+    if (f === "code" || f === "title") { d.course[f] = t.value; return; }
+    if (f === "credits") { d.course.credits = t.value === "" ? null : num(t.value); return; }
+    const compEl = t.closest(".rv-comp");
+    if (!compEl) return;
+    const c = d.components[+compEl.dataset.ci];
+    if (f === "c-name") c.name = t.value;
+    else if (f === "c-weight") { c.weight = t.value === "" ? "" : num(t.value); refreshReviewSum(); }
+    else {
+      const itEl = t.closest(".rv-item");
+      if (!itEl) return;
+      const it = c.items[+itEl.dataset.ii];
+      if (f === "i-name") it.name = t.value;
+      else if (f === "i-date") it.date = t.value;
     }
-    // rattache les fichiers importes au cours
-    for (const pf of pendingFiles) {
-      const id = uid();
-      await idbPut({ id, name: pf.name, type: pf.type, blob: pf.file });
-      course.files.push({ id, name: pf.name, type: pf.type });
-    }
-    pendingFiles = []; renderChips();
-    $("#import-text").value = "";
-    review.classList.add("hidden");
-    saveDB();
-    toast("Cours importé — complète ce qui manque");
-    switchView("view-courses");
-    openCourse(course.id);
   };
+
+  review.onclick = (e) => {
+    const d = review._data;
+    const btn = e.target.closest("[data-act]");
+    if (btn) {
+      const act = btn.dataset.act;
+      const compEl = btn.closest(".rv-comp");
+      if (act === "rv-add-comp") { d.components.push({ name: "Nouvelle composante", weight: "", rule: null, items: [] }); return reRenderReview(); }
+      if (act === "rv-del-comp" && compEl) { d.components.splice(+compEl.dataset.ci, 1); return reRenderReview(); }
+      if (act === "rv-add-item" && compEl) { d.components[+compEl.dataset.ci].items.push({ name: "", date: "" }); return reRenderReview(); }
+      if (act === "rv-del-item" && compEl) {
+        const itEl = btn.closest(".rv-item");
+        d.components[+compEl.dataset.ci].items.splice(+itEl.dataset.ii, 1);
+        return reRenderReview();
+      }
+      return;
+    }
+    if (e.target.id === "review-cancel") { review.classList.add("hidden"); return; }
+    if (e.target.id === "review-commit") { commitReview(); return; }
+  };
+}
+
+async function commitReview() {
+  const review = $("#import-review");
+  const data = review._data;
+  const target = $("#review-target").value;
+  const session = currentSession();
+  let course;
+  if (target === "__new__") {
+    course = courseFromParsed(data);
+    session.courses.push(course);
+    lastImport = { type: "new", courseId: course.id, code: course.code };
+  } else {
+    course = session.courses.find((c) => c.id === target);
+    const before = JSON.parse(JSON.stringify(course));
+    mergeParsedIntoCourse(course, data);
+    lastImport = { type: "merge", courseId: course.id, code: course.code, before, beforeFileIds: before.files.map((f) => f.id) };
+  }
+  for (const pf of pendingFiles) {
+    const id = uid();
+    await idbPut({ id, name: pf.name, type: pf.type, blob: pf.file });
+    course.files.push({ id, name: pf.name, type: pf.type });
+  }
+  pendingFiles = []; renderChips();
+  $("#import-text").value = "";
+  review.classList.add("hidden");
+  saveDB();
+  toast("Cours importé — vérifie la fiche");
+  switchView("view-courses");
+  openCourse(course.id);
 }
 
 /* ============================================================
