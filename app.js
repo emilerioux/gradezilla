@@ -1670,5 +1670,22 @@ switchView("view-courses");
 if (!db.settings.tutorialDone) openTutorial();
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+  window.addEventListener("load", async () => {
+    try {
+      const reg = await navigator.serviceWorker.register("sw.js");
+      reg.addEventListener("updatefound", () => {
+        const nw = reg.installing;
+        if (nw) nw.addEventListener("statechange", () => {
+          if (nw.state === "installed" && navigator.serviceWorker.controller) nw.postMessage("skipWaiting");
+        });
+      });
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (reloaded) return;
+        reloaded = true;
+        location.reload();
+      });
+      setInterval(() => reg.update().catch(() => {}), 60 * 60 * 1000);
+    } catch (e) { /* pas grave */ }
+  });
 }

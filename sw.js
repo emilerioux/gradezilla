@@ -1,10 +1,11 @@
-// Bump ce numero a CHAQUE deploiement, sinon le telephone garde l'ancienne version en cache.
-const CACHE_NAME = "gradezilla-v6";
-const ASSETS = [
+// Service worker "network-first" : quand tu es en ligne, tu as TOUJOURS la derniere version.
+// Le cache ne sert que de secours hors-ligne. Plus besoin de vider le cache a la main.
+const CACHE_NAME = "gradezilla-v7";
+const CORE = [
   "./",
   "./index.html",
-  "./style.css?v=6",
-  "./app.js?v=6",
+  "./style.css?v=7",
+  "./app.js?v=7",
   "./manifest.json",
   "./icons/icon.svg",
   "./icons/icon-192.png",
@@ -12,24 +13,39 @@ const ASSETS = [
 ];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
+  e.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(CORE)).catch(() => {}));
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (e) => {
   e.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-    )
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
-  self.clients.claim();
+});
+
+self.addEventListener("message", (e) => {
+  if (e.data === "skipWaiting") self.skipWaiting();
 });
 
 self.addEventListener("fetch", (e) => {
-  const url = new URL(e.request.url);
-  // Ne jamais mettre en cache les appels a l'API Claude ni les CDN.
+  const req = e.request;
+  const url = new URL(req.url);
+  if (req.method !== "GET") return;
+  // Autres domaines (API Gemini, CDN pdf.js/JSZip) : on laisse passer, jamais de cache.
   if (url.hostname !== self.location.hostname) return;
+
+  // network-first : on tente le reseau, on rafraichit le cache, et on retombe sur le cache si hors-ligne.
   e.respondWith(
-    caches.match(e.request).then((cached) => cached || fetch(e.request))
+    fetch(req)
+      .then((res) => {
+        if (res && res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE_NAME).then((c) => c.put(req, copy));
+        }
+        return res;
+      })
+      .catch(() => caches.match(req).then((cached) => cached || caches.match("./index.html")))
   );
 });
