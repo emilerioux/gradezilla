@@ -299,6 +299,10 @@ label.stack input, label.stack select { margin-top: 4px; }
   margin-bottom: 12px;
 }
 .settings-card h3 { margin: 0 0 4px; font-size: .98rem; }
+.badge-opt { font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 1px 5px; vertical-align: middle; margin-left: 4px; }
+.settings-card a { color: var(--accent-strong); }
+body.dark .settings-card a { color: var(--accent); }
+#gemini-key-input { margin-top: 2px; }
 .version-note { text-align: center; color: var(--muted); font-size: .78rem; margin-top: 18px; }
 
 /* ---- scale editor ---- */

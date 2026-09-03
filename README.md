@@ -9,7 +9,10 @@ PWA perso de suivi de notes pour l'université (Concordia, échelle GPA 4.30).
 - **Multi-sessions + GPA cumulatif** (inclut cours antérieurs / externes).
 - **Règles spéciales** : « garder les k meilleurs sur n », « retirer la pire note ».
 - **Échéances à venir** triées par date, avec le poids de chaque travail.
-- **Import de syllabus** (coller le texte, ou déposer un PDF avec texte / `.docx` / `.txt`) : analyse **locale, gratuite, aucune donnée envoyée**. Détection par motifs du sigle, des composantes + pondérations, du barème % → lettre, des règles « best k of n » / « drop lowest » et des dates. Ce qui n'est pas détecté est signalé pour complétion à la main. `pdf.js` / `JSZip` sont chargés depuis un CDN au moment de l'import (donc import = connexion requise ; le reste marche hors-ligne). PDF scannés et photos non pris en charge.
+- **Import de syllabus** — deux modes :
+  - *Par défaut* : analyse **locale, gratuite, aucune donnée envoyée**. Détection par motifs (regex) du sigle, des composantes + pondérations, du barème % → lettre, des règles « best k of n » / « drop lowest » et des dates, sur du texte collé ou extrait d'un PDF (`pdf.js`) / `.docx` (`JSZip`). PDF scannés et photos non pris en charge.
+  - *Optionnel* : coller une clé **Google Gemini** (gratuite, sans carte — `aistudio.google.com/apikey`) dans Réglages → l'import passe par `gemini-2.5-flash` : lecture plus fiable, gère **photos et PDF scannés**. Clé stockée en local uniquement. Sur l'offre gratuite, Google peut utiliser le contenu pour améliorer ses services.
+  - Ce qui n'est pas détecté est signalé pour complétion à la main dans la fiche du cours.
 - **Tutoriel** de premier lancement, re-jouable depuis Réglages → Aide.
 
 ## Données

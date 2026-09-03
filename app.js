@@ -104,7 +104,7 @@ function defaultDB() {
     sessions: [session],
     past: [],
     settings: {
-      dark: false, gpaIncludeProjected: true, tutorialDone: false,
+      dark: false, gpaIncludeProjected: true, tutorialDone: false, geminiKey: "",
       defaultScale: DEFAULT_SCALE.map((x) => ({ ...x })),
     },
   };
@@ -118,7 +118,7 @@ function loadDB() {
     // garde-fous minimaux
     if (!parsed.sessions || !Array.isArray(parsed.sessions) || !parsed.sessions.length) return defaultDB();
     parsed.past = parsed.past || [];
-    parsed.settings = Object.assign({ dark: false, gpaIncludeProjected: true, tutorialDone: false }, parsed.settings || {});
+    parsed.settings = Object.assign({ dark: false, gpaIncludeProjected: true, tutorialDone: false, geminiKey: "" }, parsed.settings || {});
     if (!Array.isArray(parsed.settings.defaultScale) || !parsed.settings.defaultScale.length) {
       parsed.settings.defaultScale = DEFAULT_SCALE.map((x) => ({ ...x }));
     }
@@ -512,6 +512,7 @@ function renderGPA() {
 /* ---------- vue REGLAGES ---------- */
 function renderSettings() {
   $("#dark-toggle").checked = !!db.settings.dark;
+  $("#gemini-key-input").value = db.settings.geminiKey || "";
   renderScaleEditor($("#default-scale-editor"), db.settings.defaultScale, () => saveDB());
 }
 
@@ -965,6 +966,27 @@ $("#course-list").addEventListener("click", (e) => {
 $("#dark-toggle").addEventListener("change", (e) => {
   db.settings.dark = e.target.checked; saveDB(); applyTheme();
 });
+$("#gemini-save-btn").onclick = () => {
+  db.settings.geminiKey = $("#gemini-key-input").value.trim();
+  saveDB();
+  toast(db.settings.geminiKey ? "Clé Gemini enregistrée — l'import passe en mode intelligent" : "Aucune clé — analyse locale");
+};
+$("#gemini-clear-btn").onclick = () => {
+  db.settings.geminiKey = ""; $("#gemini-key-input").value = ""; saveDB();
+  toast("Clé retirée — retour à l'analyse locale gratuite");
+};
+$("#gemini-test-btn").onclick = async () => {
+  const k = $("#gemini-key-input").value.trim();
+  if (!k) { toast("Entre une clé d'abord"); return; }
+  db.settings.geminiKey = k; saveDB();
+  toast("Test en cours…");
+  try {
+    const r = await callGemini([{ text: 'Réponds exactement: {"ok":true}' }]);
+    toast(r && r.ok ? "✅ Clé Gemini valide" : "✅ Clé acceptée");
+  } catch (e) {
+    toast("❌ " + e.message.slice(0, 90));
+  }
+};
 $("#reset-scale-btn").onclick = () => {
   db.settings.defaultScale = DEFAULT_SCALE.map((x) => ({ ...x }));
   saveDB(); renderSettings(); toast("Barème par défaut réinitialisé");
@@ -1052,6 +1074,15 @@ async function extractDocxText(file) {
     .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function blobToB64(blob) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result).split(",")[1]);
+    r.onerror = rej;
+    r.readAsDataURL(blob);
+  });
 }
 
 // PDF : extraction du texte via pdf.js (chargé au besoin depuis un CDN). Ne lit pas les PDF scannés.
@@ -1232,6 +1263,71 @@ function parseSyllabusText(text) {
   };
 }
 
+/* ---------- analyse "intelligente" optionnelle : Google Gemini (offre gratuite, sans carte) ---------- */
+const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_PROMPT = `Tu extrais la structure d'un cours universitaire (Concordia) depuis un syllabus et/ou un relevé de notes.
+Réponds UNIQUEMENT avec un objet JSON conforme à ce schéma, sans texte autour :
+{
+ "course":{"code":string|null,"title":string|null,"instructor":string|null,"email":string|null,"room":string|null,"officeHours":string|null,"latePolicy":string|null,"credits":number|null},
+ "gradeScale":[{"letter":"A+","min":number}]|null,
+ "components":[{"name":string,"weight":number,"rule":{"type":"best_k_of_n","keep":number,"of":number}|{"type":"drop_lowest","n":number}|null,"items":[{"name":string,"date":"YYYY-MM-DD"|null}]}],
+ "grades":[{"component":string,"item":string|null,"grade":number,"max":number}],
+ "uncertain":[string],
+ "missing":[string]
+}
+Poids = nombres (25 pas "25%"), total proche de 100. Déduis l'année des dates : session d'automne = sept-déc de l'année courante, hiver = janv-avr. Ne fabrique rien : info absente -> null + libellé FR clair dans "missing". "uncertain" = champs devinés. "grades" = notes déjà obtenues (relevé).`;
+
+function parseJSONLoose(s) {
+  let t = String(s).trim();
+  if (t.startsWith("```")) t = t.replace(/^```(json)?/i, "").replace(/```$/, "").trim();
+  const a = t.indexOf("{"), b = t.lastIndexOf("}");
+  if (a >= 0 && b > a) t = t.slice(a, b + 1);
+  return JSON.parse(t);
+}
+
+async function buildGeminiParts() {
+  const parts = [{ text: GEMINI_PROMPT }];
+  const pasted = $("#import-text").value.trim();
+  const chunks = [];
+  if (pasted) chunks.push("TEXTE COLLÉ :\n" + pasted);
+  for (const pf of pendingFiles) {
+    const t = pf.type || guessType(pf.name);
+    const low = pf.name.toLowerCase();
+    if (t === "application/pdf" || low.endsWith(".pdf")) {
+      parts.push({ inline_data: { mime_type: "application/pdf", data: await blobToB64(pf.file) } });
+    } else if (t.startsWith("image/")) {
+      parts.push({ inline_data: { mime_type: t, data: await blobToB64(pf.file) } });
+    } else if (t.includes("wordprocessingml") || low.endsWith(".docx")) {
+      chunks.push(`${pf.name} :\n` + await extractDocxText(pf.file));
+    } else {
+      chunks.push(`${pf.name} :\n` + await pf.file.text());
+    }
+  }
+  if (chunks.length) parts.push({ text: chunks.join("\n\n") });
+  parts.push({ text: `Date du jour : ${new Date().toISOString().slice(0, 10)}.` });
+  return parts;
+}
+
+async function callGemini(parts) {
+  const key = db.settings.geminiKey;
+  if (!key) throw new Error("Aucune clé Gemini.");
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(key)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ contents: [{ parts }], generationConfig: { responseMimeType: "application/json", temperature: 0 } }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = (data.error && data.error.message) || `HTTP ${res.status}`;
+    throw new Error(`Gemini : ${msg}`.slice(0, 220));
+  }
+  const cand = (data.candidates || [])[0];
+  const txt = (((cand || {}).content || {}).parts || []).map((p) => p.text || "").join("").trim();
+  if (!txt) throw new Error("Réponse Gemini vide (contenu peut-être bloqué).");
+  return parseJSONLoose(txt);
+}
+
 $("#import-analyze-btn").onclick = async () => {
   const pasted = $("#import-text").value.trim();
   if (!pendingFiles.length && !pasted) { toast("Ajoute un fichier ou colle du texte"); return; }
@@ -1239,20 +1335,31 @@ $("#import-analyze-btn").onclick = async () => {
   const review = $("#import-review");
   review.classList.add("hidden");
   status.classList.remove("hidden");
-  status.innerHTML = `<span class="spinner"></span> Lecture du document…`;
+  const useGemini = !!db.settings.geminiKey;
+  status.innerHTML = `<span class="spinner"></span> ${useGemini ? "Analyse avec Gemini…" : "Lecture du document…"}`;
   try {
-    const parts = [];
-    if (pasted) parts.push(pasted);
-    for (const pf of pendingFiles) {
-      const t = pf.type || "";
-      if (t === "application/pdf" || pf.name.toLowerCase().endsWith(".pdf")) parts.push(await extractPdfText(pf.file));
-      else if (t.includes("wordprocessingml") || pf.name.toLowerCase().endsWith(".docx")) parts.push(await extractDocxText(pf.file));
-      else if (t.startsWith("image/")) throw new Error("Les photos ne sont pas lues (version gratuite). Utilise le PDF du syllabus ou copie-colle le texte.");
-      else parts.push(await pf.file.text());
+    let data;
+    if (useGemini) {
+      data = await callGemini(await buildGeminiParts());
+      if (!data || typeof data !== "object") throw new Error("Réponse inattendue.");
+      data.components = Array.isArray(data.components) ? data.components : [];
+      data.grades = Array.isArray(data.grades) ? data.grades : [];
+      data.missing = Array.isArray(data.missing) ? data.missing : [];
+      data.uncertain = Array.isArray(data.uncertain) ? data.uncertain : [];
+    } else {
+      const parts = [];
+      if (pasted) parts.push(pasted);
+      for (const pf of pendingFiles) {
+        const t = pf.type || "";
+        if (t === "application/pdf" || pf.name.toLowerCase().endsWith(".pdf")) parts.push(await extractPdfText(pf.file));
+        else if (t.includes("wordprocessingml") || pf.name.toLowerCase().endsWith(".docx")) parts.push(await extractDocxText(pf.file));
+        else if (t.startsWith("image/")) throw new Error("Photo non lisible sans clé. Ajoute une clé Gemini gratuite (Réglages) ou copie-colle le texte.");
+        else parts.push(await pf.file.text());
+      }
+      const text = parts.join("\n\n");
+      if (text.replace(/\s/g, "").length < 15) throw new Error("Pas assez de texte à analyser.");
+      data = parseSyllabusText(text);
     }
-    const text = parts.join("\n\n");
-    if (text.replace(/\s/g, "").length < 15) throw new Error("Pas assez de texte à analyser.");
-    const data = parseSyllabusText(text);
     status.classList.add("hidden");
     renderReview(data);
   } catch (err) {
@@ -1434,7 +1541,7 @@ const TUTO_STEPS = [
   },
   {
     emoji: "📄", title: "Import de syllabus",
-    body: `Colle le texte d'un <strong>syllabus</strong> ou dépose le <strong>PDF / .docx</strong>. Gradezilla repère le sigle, les composantes, les pondérations et le barème, puis pré-remplit le cours. Analyse <strong>locale et gratuite</strong> — c'est de la détection de motifs, donc vérifie le résultat et complète ce qui est signalé en orange.`,
+    body: `Colle le texte d'un <strong>syllabus</strong> ou dépose le <strong>PDF / .docx</strong> : Gradezilla repère le sigle, les composantes, les pondérations et le barème, puis pré-remplit le cours. Analyse <strong>locale et gratuite</strong> par défaut (détection de motifs — vérifie le résultat). Pour les <strong>photos</strong>, PDF scannés ou formats inhabituels, ajoute dans Réglages une clé <strong>Google Gemini</strong> — gratuite, sans carte.`,
   },
   {
     emoji: "📊", title: "Dates, GPA & sauvegarde",
