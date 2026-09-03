@@ -303,6 +303,10 @@ label.stack input, label.stack select { margin-top: 4px; }
 .settings-card a { color: var(--accent-strong); }
 body.dark .settings-card a { color: var(--accent); }
 #gemini-key-input { margin-top: 2px; }
+.gemini-status { margin-top: 10px; font-size: .82rem; line-height: 1.45; }
+.gemini-status.ok { color: var(--ok); }
+.gemini-status.bad { color: var(--bad); }
+.gemini-status .spinner { vertical-align: -2px; margin-right: 6px; }
 .version-note { text-align: center; color: var(--muted); font-size: .78rem; margin-top: 18px; }
 
 /* ---- scale editor ---- */

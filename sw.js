@@ -1,10 +1,10 @@
 // Bump ce numero a CHAQUE deploiement, sinon le telephone garde l'ancienne version en cache.
-const CACHE_NAME = "gradezilla-v4";
+const CACHE_NAME = "gradezilla-v5";
 const ASSETS = [
   "./",
   "./index.html",
-  "./style.css?v=4",
-  "./app.js?v=4",
+  "./style.css?v=5",
+  "./app.js?v=5",
   "./manifest.json",
   "./icons/icon.svg",
   "./icons/icon-192.png",

@@ -104,7 +104,7 @@ function defaultDB() {
     sessions: [session],
     past: [],
     settings: {
-      dark: false, gpaIncludeProjected: true, tutorialDone: false, geminiKey: "",
+      dark: false, gpaIncludeProjected: true, tutorialDone: false, geminiKey: "", geminiModel: "",
       defaultScale: DEFAULT_SCALE.map((x) => ({ ...x })),
     },
   };
@@ -118,7 +118,7 @@ function loadDB() {
     // garde-fous minimaux
     if (!parsed.sessions || !Array.isArray(parsed.sessions) || !parsed.sessions.length) return defaultDB();
     parsed.past = parsed.past || [];
-    parsed.settings = Object.assign({ dark: false, gpaIncludeProjected: true, tutorialDone: false, geminiKey: "" }, parsed.settings || {});
+    parsed.settings = Object.assign({ dark: false, gpaIncludeProjected: true, tutorialDone: false, geminiKey: "", geminiModel: "" }, parsed.settings || {});
     if (!Array.isArray(parsed.settings.defaultScale) || !parsed.settings.defaultScale.length) {
       parsed.settings.defaultScale = DEFAULT_SCALE.map((x) => ({ ...x }));
     }
@@ -966,25 +966,37 @@ $("#course-list").addEventListener("click", (e) => {
 $("#dark-toggle").addEventListener("change", (e) => {
   db.settings.dark = e.target.checked; saveDB(); applyTheme();
 });
+function geminiStatus(html, kind) {
+  const el = $("#gemini-status");
+  if (!el) return;
+  el.className = "gemini-status" + (kind ? " " + kind : "");
+  el.innerHTML = html;
+  el.classList.toggle("hidden", !html);
+}
 $("#gemini-save-btn").onclick = () => {
-  db.settings.geminiKey = $("#gemini-key-input").value.trim();
+  db.settings.geminiKey = cleanKey($("#gemini-key-input").value);
+  db.settings.geminiModel = "";
+  $("#gemini-key-input").value = db.settings.geminiKey;
   saveDB();
-  toast(db.settings.geminiKey ? "Clé Gemini enregistrée — l'import passe en mode intelligent" : "Aucune clé — analyse locale");
+  geminiStatus(db.settings.geminiKey ? "Clé enregistrée. Clique « Tester » pour vérifier." : "Aucune clé — l'import utilise l'analyse locale.", "");
 };
 $("#gemini-clear-btn").onclick = () => {
-  db.settings.geminiKey = ""; $("#gemini-key-input").value = ""; saveDB();
-  toast("Clé retirée — retour à l'analyse locale gratuite");
+  db.settings.geminiKey = ""; db.settings.geminiModel = ""; $("#gemini-key-input").value = ""; saveDB();
+  geminiStatus("Clé retirée — retour à l'analyse locale gratuite.", "");
 };
 $("#gemini-test-btn").onclick = async () => {
-  const k = $("#gemini-key-input").value.trim();
-  if (!k) { toast("Entre une clé d'abord"); return; }
-  db.settings.geminiKey = k; saveDB();
-  toast("Test en cours…");
+  const k = cleanKey($("#gemini-key-input").value);
+  if (!k) { geminiStatus("Entre une clé d'abord.", "bad"); return; }
+  db.settings.geminiKey = k; $("#gemini-key-input").value = k; saveDB();
+  geminiStatus('<span class="spinner"></span> Vérification de la clé…', "");
   try {
-    const r = await callGemini([{ text: 'Réponds exactement: {"ok":true}' }]);
-    toast(r && r.ok ? "✅ Clé Gemini valide" : "✅ Clé acceptée");
+    const models = await geminiListModels(k);
+    if (!models.length) { geminiStatus("La clé fonctionne, mais aucun modèle « generateContent » n'est disponible.", "bad"); return; }
+    db.settings.geminiModel = pickGeminiModel(models);
+    saveDB();
+    geminiStatus(`✅ Clé valide. Modèle utilisé : <strong>${esc(db.settings.geminiModel)}</strong>. L'import passe en mode intelligent.`, "ok");
   } catch (e) {
-    toast("❌ " + e.message.slice(0, 90));
+    geminiStatus(`❌ ${esc(e.message)}${e.hint ? "<br><br>" + esc(e.hint) : ""}`, "bad");
   }
 };
 $("#reset-scale-btn").onclick = () => {
@@ -1308,24 +1320,76 @@ async function buildGeminiParts() {
   return parts;
 }
 
-async function callGemini(parts) {
-  const key = db.settings.geminiKey;
-  if (!key) throw new Error("Aucune clé Gemini.");
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(key)}`;
-  const res = await fetch(url, {
+const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
+
+function cleanKey(s) { return String(s || "").trim().replace(/^["']|["']$/g, "").trim(); }
+
+function geminiKeyHint(msg) {
+  if (/API_KEY_INVALID|api key not valid|API_KEY_HTTP_REFERRER_BLOCKED|invalid api key/i.test(msg)) {
+    return "Clé Gemini refusée. Elle doit venir de aistudio.google.com/apikey (bouton « Create API key »), collée sans espace ni guillemets. Si tu l'as créée dans un projet Google Cloud, ouvre-le et active l'API « Generative Language ». Vérifie aussi qu'aucune restriction de referrer/API n'est posée sur la clé.";
+  }
+  if (/SERVICE_DISABLED|has not been used|is disabled/i.test(msg)) {
+    return "L'API « Generative Language » n'est pas activée pour le projet de cette clé. Active-la dans Google Cloud, ou crée une nouvelle clé via aistudio.google.com/apikey (elle l'active automatiquement).";
+  }
+  if (/RESOURCE_EXHAUSTED|quota|rate/i.test(msg)) return "Quota Gemini atteint pour l'instant — réessaie dans une minute.";
+  return "";
+}
+
+async function geminiListModels(key) {
+  const res = await fetch(`${GEMINI_BASE}/models?key=${encodeURIComponent(key)}&pageSize=200`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const m = (data.error && data.error.message) || `HTTP ${res.status}`;
+    const err = new Error(m); err.hint = geminiKeyHint(m); throw err;
+  }
+  return (data.models || []).filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"));
+}
+function pickGeminiModel(models) {
+  const names = models.map((m) => String(m.name).replace(/^models\//, ""));
+  return names.find((n) => /^gemini-2\.5-flash$/.test(n))
+    || names.find((n) => /^gemini-flash-latest$/.test(n))
+    || names.find((n) => /^gemini-2\.\d-flash$/.test(n))
+    || names.find((n) => /flash/.test(n) && !/(thinking|exp|lite|vision)/.test(n))
+    || names.find((n) => /flash/.test(n))
+    || names[0] || GEMINI_MODEL;
+}
+
+async function geminiGenerate(key, model, parts) {
+  const res = await fetch(`${GEMINI_BASE}/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ contents: [{ parts }], generationConfig: { responseMimeType: "application/json", temperature: 0 } }),
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 404) return { notFound: true };
   if (!res.ok) {
-    const msg = (data.error && data.error.message) || `HTTP ${res.status}`;
-    throw new Error(`Gemini : ${msg}`.slice(0, 220));
+    const m = (data.error && data.error.message) || `HTTP ${res.status}`;
+    const hint = geminiKeyHint(m);
+    return { error: "Gemini : " + m + (hint ? "\n\n" + hint : "") };
   }
   const cand = (data.candidates || [])[0];
   const txt = (((cand || {}).content || {}).parts || []).map((p) => p.text || "").join("").trim();
-  if (!txt) throw new Error("Réponse Gemini vide (contenu peut-être bloqué).");
-  return parseJSONLoose(txt);
+  if (!txt) return { error: "Réponse Gemini vide (contenu peut-être bloqué par un filtre de sécurité)." };
+  try { return { data: parseJSONLoose(txt) }; }
+  catch (e) { return { error: "Réponse Gemini illisible (pas du JSON)." }; }
+}
+
+async function callGemini(parts) {
+  const key = cleanKey(db.settings.geminiKey);
+  if (!key) throw new Error("Aucune clé Gemini.");
+  let model = db.settings.geminiModel || GEMINI_MODEL;
+  let out = await geminiGenerate(key, model, parts);
+  if (out.notFound) {
+    const models = await geminiListModels(key).catch(() => []);
+    if (models.length) {
+      model = pickGeminiModel(models);
+      db.settings.geminiModel = model; saveDB();
+      out = await geminiGenerate(key, model, parts);
+    }
+  }
+  if (out.notFound) throw new Error(`Modèle « ${model} » introuvable pour cette clé.`);
+  if (out.error) throw new Error(out.error);
+  return out.data;
 }
 
 $("#import-analyze-btn").onclick = async () => {
@@ -1363,7 +1427,7 @@ $("#import-analyze-btn").onclick = async () => {
     status.classList.add("hidden");
     renderReview(data);
   } catch (err) {
-    status.innerHTML = `<span class="bad">⚠ ${esc(err.message)}</span>`;
+    status.innerHTML = `<span class="bad">⚠ ${esc(err.message).replace(/\n+/g, "<br>")}</span>`;
   }
 };
 
