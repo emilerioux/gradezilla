@@ -104,8 +104,7 @@ function defaultDB() {
     sessions: [session],
     past: [],
     settings: {
-      apiKey: "", model: "claude-sonnet-5", dark: false, gpaIncludeProjected: true,
-      tutorialDone: false,
+      dark: false, gpaIncludeProjected: true, tutorialDone: false,
       defaultScale: DEFAULT_SCALE.map((x) => ({ ...x })),
     },
   };
@@ -119,7 +118,7 @@ function loadDB() {
     // garde-fous minimaux
     if (!parsed.sessions || !Array.isArray(parsed.sessions) || !parsed.sessions.length) return defaultDB();
     parsed.past = parsed.past || [];
-    parsed.settings = Object.assign({ apiKey: "", model: "claude-sonnet-5", dark: false, gpaIncludeProjected: true, tutorialDone: false }, parsed.settings || {});
+    parsed.settings = Object.assign({ dark: false, gpaIncludeProjected: true, tutorialDone: false }, parsed.settings || {});
     if (!Array.isArray(parsed.settings.defaultScale) || !parsed.settings.defaultScale.length) {
       parsed.settings.defaultScale = DEFAULT_SCALE.map((x) => ({ ...x }));
     }
@@ -512,8 +511,6 @@ function renderGPA() {
 
 /* ---------- vue REGLAGES ---------- */
 function renderSettings() {
-  $("#api-key-input").value = db.settings.apiKey || "";
-  $("#model-select").value = db.settings.model || "claude-sonnet-5";
   $("#dark-toggle").checked = !!db.settings.dark;
   renderScaleEditor($("#default-scale-editor"), db.settings.defaultScale, () => saveDB());
 }
@@ -965,30 +962,12 @@ $("#course-list").addEventListener("click", (e) => {
 /* ============================================================
    Reglages : evenements
    ============================================================ */
-$("#save-settings-btn").onclick = () => {
-  db.settings.apiKey = $("#api-key-input").value.trim();
-  db.settings.model = $("#model-select").value;
-  saveDB(); toast("Réglages enregistrés");
-};
 $("#dark-toggle").addEventListener("change", (e) => {
   db.settings.dark = e.target.checked; saveDB(); applyTheme();
 });
 $("#reset-scale-btn").onclick = () => {
   db.settings.defaultScale = DEFAULT_SCALE.map((x) => ({ ...x }));
   saveDB(); renderSettings(); toast("Barème par défaut réinitialisé");
-};
-
-$("#test-api-btn").onclick = async () => {
-  const key = $("#api-key-input").value.trim();
-  if (!key) { toast("Entre une clé d'abord"); return; }
-  db.settings.apiKey = key; db.settings.model = $("#model-select").value; saveDB();
-  toast("Test en cours…");
-  try {
-    await callClaude("Réponds uniquement par: OK", [{ type: "text", text: "ping" }], 20);
-    toast("✅ Clé valide");
-  } catch (err) {
-    toast("❌ " + err.message.slice(0, 80));
-  }
 };
 
 $("#export-btn").onclick = () => {
@@ -1049,16 +1028,7 @@ function guessType(name) {
   return { pdf: "application/pdf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", txt: "text/plain", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif" }[e] || "";
 }
 
-function blobToB64(blob) {
-  return new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onload = () => res(String(r.result).split(",")[1]);
-    r.onerror = rej;
-    r.readAsDataURL(blob);
-  });
-}
-
-// .docx = zip ; on lit word/document.xml et on retire les balises. JSZip charge en differe depuis un CDN.
+// .docx = zip : on lit word/document.xml et on retire les balises. JSZip chargé au besoin depuis un CDN.
 let _jszip = null;
 function loadJSZip() {
   if (_jszip) return Promise.resolve(_jszip);
@@ -1067,7 +1037,7 @@ function loadJSZip() {
     const s = document.createElement("script");
     s.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
     s.onload = () => { _jszip = window.JSZip; res(_jszip); };
-    s.onerror = () => rej(new Error("Impossible de charger le lecteur .docx (hors-ligne ?). Copie-colle le texte."));
+    s.onerror = () => rej(new Error("Lecteur .docx indisponible (hors-ligne ?). Copie-colle le texte."));
     document.head.appendChild(s);
   });
 }
@@ -1084,99 +1054,209 @@ async function extractDocxText(file) {
     .trim();
 }
 
-async function buildContentBlocks() {
-  const blocks = [];
-  const pastedText = $("#import-text").value.trim();
-  const textParts = [];
-  if (pastedText) textParts.push("=== TEXTE COLLÉ ===\n" + pastedText);
+// PDF : extraction du texte via pdf.js (chargé au besoin depuis un CDN). Ne lit pas les PDF scannés.
+let _pdfjs = null;
+function loadPdfJs() {
+  if (_pdfjs) return Promise.resolve(_pdfjs);
+  if (window.pdfjsLib) { _pdfjs = window.pdfjsLib; return Promise.resolve(_pdfjs); }
+  return new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    s.onload = () => {
+      _pdfjs = window.pdfjsLib;
+      _pdfjs.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      res(_pdfjs);
+    };
+    s.onerror = () => rej(new Error("Lecteur PDF indisponible (hors-ligne ?). Copie-colle le texte du syllabus."));
+    document.head.appendChild(s);
+  });
+}
+async function extractPdfText(file) {
+  const pdfjsLib = await loadPdfJs();
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const pages = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    pages.push(content.items.map((it) => it.str).join(" "));
+  }
+  const text = pages.join("\n");
+  if (text.replace(/\s/g, "").length < 20) {
+    throw new Error("Ce PDF ne contient pas de texte sélectionnable (scanné ?). Copie-colle le texte à la main.");
+  }
+  return text;
+}
 
-  for (const pf of pendingFiles) {
-    const t = pf.type;
-    if (t === "application/pdf") {
-      blocks.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: await blobToB64(pf.file) } });
-    } else if (t.startsWith("image/")) {
-      blocks.push({ type: "image", source: { type: "base64", media_type: t, data: await blobToB64(pf.file) } });
-    } else if (t.includes("wordprocessingml") || pf.name.toLowerCase().endsWith(".docx")) {
-      textParts.push(`=== ${pf.name} ===\n` + await extractDocxText(pf.file));
-    } else {
-      textParts.push(`=== ${pf.name} ===\n` + await pf.file.text());
+/* ---------- analyse locale d'un syllabus (heuristique, hors-ligne, gratuite) ---------- */
+const MONTHS_FR = { janvier: 1, "février": 2, fevrier: 2, mars: 3, avril: 4, mai: 5, juin: 6, juillet: 7, "août": 8, aout: 8, septembre: 9, octobre: 10, novembre: 11, "décembre": 12, decembre: 12 };
+const MONTHS_EN = { january: 1, february: 2, march: 3, april: 4, may: 5, june: 6, july: 7, august: 8, september: 9, october: 10, november: 11, december: 12, jan: 1, feb: 2, mar: 3, apr: 4, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12 };
+const COMP_KEYWORDS = /(assignment|assignments|devoir|devoirs|homework|problem set|quiz|quizzes|test|midterm|mid-term|intra|exam|examen|final|lab|labo|laboratory|laboratoire|project|projet|presentation|présentation|report|rapport|participation|attendance|présence|tutorial|worksheet)/i;
+
+function guessYear(month) {
+  // session automne : sept–déc de l'année courante ; hiver : janv–avr de l'année suivante
+  const now = new Date();
+  const y = now.getFullYear();
+  if (month >= 8) return now.getMonth() >= 4 ? y : y - 1;      // automne
+  return now.getMonth() >= 4 ? y + 1 : y;                       // hiver
+}
+const MONTH_NAMES = Object.keys(MONTHS_FR).concat(Object.keys(MONTHS_EN)).sort((a, b) => b.length - a.length).join("|");
+const RE_MONTH_DAY = new RegExp(`\\b(${MONTH_NAMES})\\.?\\s+(\\d{1,2})(?:st|nd|rd|th|er|e)?\\b`, "i");
+const RE_DAY_MONTH = new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th|er|e)?\\s+(?:of\\s+)?(${MONTH_NAMES})\\b`, "i");
+function monthNum(name) { const k = name.toLowerCase(); return MONTHS_FR[k] || MONTHS_EN[k] || null; }
+function mkDate(y, mon, day) { return `${y}-${String(mon).padStart(2, "0")}-${String(+day).padStart(2, "0")}`; }
+function parseDateToken(str) {
+  let m = str.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = str.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/); // jj/mm/aaaa
+  if (m) return mkDate(m[3], +m[2], +m[1]);
+  m = str.match(RE_MONTH_DAY);
+  if (m) { const mon = monthNum(m[1]); if (mon) return mkDate(guessYear(mon), mon, m[2]); }
+  m = str.match(RE_DAY_MONTH);
+  if (m) { const mon = monthNum(m[2]); if (mon) return mkDate(guessYear(mon), mon, m[1]); }
+  return "";
+}
+
+function parseSyllabusText(text) {
+  const joined = text.replace(/ /g, " ").replace(/[ \t]+/g, " ");
+  const lines = joined.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const flat = joined.replace(/\s+/g, " ");
+
+  // --- sigle + titre ---
+  const codeM = flat.match(/\b([A-Z]{3,4})\s?-?\s?(\d{3})\b/);
+  const code = codeM ? `${codeM[1]} ${codeM[2]}` : "";
+  let title = "";
+  if (codeM) {
+    const after = flat.slice(codeM.index + codeM[0].length, codeM.index + codeM[0].length + 80);
+    const tm = after.match(/^[\s:–—-]*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ ,&'/-]{3,60})/);
+    if (tm) title = tm[1].trim().replace(/\s+(section|sec\.?|fall|winter|automne|hiver|crn)\b.*$/i, "").trim();
+  }
+
+  // --- crédits, courriel, enseignant ---
+  let credM = flat.match(/cr[ée]dits?\s*[:=]?\s*(\d(?:\.\d+)?)\b/i);
+  if (!credM) { const m2 = flat.match(/(?:^|[^\d:.])(\d(?:\.\d+)?)\s*cr[ée]dits?\b/i); if (m2) credM = [m2[0], m2[1]]; }
+  const credits = credM ? parseFloat(credM[1]) : null;
+  const emailM = flat.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+  const email = emailM ? emailM[0] : "";
+  const instrM = flat.match(/(?:instructor|professor|lecturer|enseignant\.?e?|professeur\.?e?|charg[ée]\.?e? de cours)\s*[:\-]\s*((?:Dr\.?|Prof\.?|M\.?|Mme\.?)?\s?[A-ZÀ-Ý][\wÀ-ÿ.'-]+(?:\s+[A-ZÀ-Ý][\wÀ-ÿ.'-]+){0,3})/);
+  const instructor = instrM ? instrM[1].trim() : "";
+
+  // --- composantes : "<nom> ... <n>%" ou "<n>% ... <nom>" ---
+  const comps = [];
+  const seenNames = new Set();
+  const addComp = (name, weight) => {
+    name = name.replace(/^[\s.\d)(:•*–—-]+/, "").replace(/\s*\([^)]*\)\s*$/, "").replace(/[\s.:–—-]+$/, "").trim();
+    if (!name || name.length > 48 || /^(total|grand total|sous-total|subtotal|note finale|final grade|grade|note)$/i.test(name)) return;
+    const w = Math.round(weight);
+    if (!(w > 0 && w <= 100)) return;
+    const key = name.toLowerCase();
+    if (seenNames.has(key)) return;
+    seenNames.add(key);
+    comps.push({ name, weight: w, rule: null, items: [] });
+  };
+  for (const l of lines) {
+    let m = l.match(/^(.{2,48}?)\s*[.:·•\-–—]*\s*(\d{1,3})(?:\s*[-–]\s*\d{1,3})?\s*%/);
+    if (m && COMP_KEYWORDS.test(m[1])) { addComp(m[1], +m[2]); continue; }
+    m = l.match(/^(\d{1,3})(?:\s*[-–]\s*\d{1,3})?\s*%\s*[.:·•\-–—]*\s*(.{2,48})$/);
+    if (m && COMP_KEYWORDS.test(m[2])) { addComp(m[2], +m[1]); continue; }
+    if (m && !comps.length) { /* garde en réserve si rien d'autre */ }
+  }
+  // 2e passe plus permissive si on n'a rien trouvé
+  if (!comps.length) {
+    const re = /([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ /'-]{2,40}?)\s*[:=]?\s*(\d{1,3})\s*%/g;
+    let mm;
+    while ((mm = re.exec(flat))) if (COMP_KEYWORDS.test(mm[1])) addComp(mm[1], +mm[2]);
+  }
+
+  // --- règles spéciales ---
+  let rule = null;
+  let rm = flat.match(/best\s+(\d+)\s+(?:of|out of|\/)\s+(\d+)/i) || flat.match(/(\d+)\s+(?:meilleur\w*|best)\b[^.]{0,15}?(?:sur|of|\/)\s*(\d+)/i);
+  if (rm) rule = { type: "best_k_of_n", keep: +rm[1], of: +rm[2] };
+  else if (/drop(?:ping|ped)?\s+(?:the\s+)?(?:lowest|worst)|(?:la\s+)?(?:plus\s+faible|plus\s+basse|pire)\s+(?:note|r[ée]sultat)\s+(?:sera|est|ser[oa]nt)?\s*(?:retir|[ée]limin|abandonn)/i.test(flat)) {
+    const nm = flat.match(/drop(?:ping)?\s+(?:the\s+)?(\d+)\s+lowest/i);
+    rule = { type: "drop_lowest", n: nm ? +nm[1] : 1 };
+  }
+  if (rule) {
+    const target = comps.find((c) => /quiz|assignment|devoir|homework|lab/i.test(c.name)) || comps[0];
+    if (target) target.rule = rule;
+  }
+
+  // --- dates rattachées aux composantes quand la ligne contient un mot-clé ---
+  for (const l of lines) {
+    if (!COMP_KEYWORDS.test(l)) continue;
+    const d = parseDateToken(l);
+    if (!d) continue;
+    const ll = l.toLowerCase();
+    const comp = comps.find((c) => ll.includes(c.name.toLowerCase()))
+      || comps.find((c) => {
+        const w = c.name.toLowerCase().split(/\s+/).slice(0, 2).join(" ");
+        return w.length > 3 && ll.includes(w);
+      });
+    if (!comp) continue;
+    const label = ((l.match(COMP_KEYWORDS) || [])[0] || "Évaluation");
+    if (!comp.items.some((it) => it.date === d)) {
+      comp.items.push({ name: label.charAt(0).toUpperCase() + label.slice(1), date: d });
     }
   }
-  if (textParts.length) blocks.push({ type: "text", text: textParts.join("\n\n") });
-  blocks.push({ type: "text", text: "Extrais les infos de ce cours selon le schéma JSON demandé. Aujourd'hui : 2026-09-02. Session type : automne 2026 (sept–déc 2026) ou hiver 2027 (janv–avr 2027)." });
-  return blocks;
-}
 
-const EXTRACT_SYSTEM = `Tu extrais la structure d'un cours universitaire (Concordia) à partir d'un syllabus et/ou d'un relevé de notes.
-Réponds UNIQUEMENT avec un objet JSON valide, sans texte autour, sans balises Markdown.
-
-Schéma :
-{
-  "course": {"code": string|null, "title": string|null, "instructor": string|null, "email": string|null, "room": string|null, "officeHours": string|null, "latePolicy": string|null, "credits": number|null},
-  "gradeScale": [{"letter": "A+", "min": number}, ...] | null,   // seuils %→lettre SI présents dans le document
-  "components": [
-    {"name": string, "weight": number,                          // poids en %, nombre seul (ex: 25 pas "25%")
-     "rule": {"type":"best_k_of_n","keep":number,"of":number} | {"type":"drop_lowest","n":number} | null,
-     "items": [{"name": string, "date": "YYYY-MM-DD"|null}]}     // devoirs/quiz/examens de cette composante, avec dates si connues
-  ],
-  "grades": [{"component": string, "item": string|null, "grade": number, "max": number}],  // notes DÉJÀ obtenues (relevé)
-  "uncertain": [string],   // libellés FR des champs devinés / peu fiables
-  "missing": [string]      // libellés FR des infos importantes ABSENTES du document (ex: "Date du final", "Crédits", "Pondération du labo")
-}
-
-Règles : les poids doivent si possible totaliser 100. Déduis l'année des dates selon le contexte de session. Si une info est absente, mets null et ajoute un libellé clair dans "missing". Ne fabrique pas de dates ni de pondérations.`;
-
-async function callClaude(system, content, maxTokens = 3000) {
-  const key = db.settings.apiKey;
-  if (!key) throw new Error("Ajoute ta clé API dans Réglages.");
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": key,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
-      model: db.settings.model || "claude-sonnet-5",
-      max_tokens: maxTokens,
-      system,
-      messages: [{ role: "user", content }],
-    }),
-  });
-  if (!res.ok) {
-    let detail = "";
-    try { const j = await res.json(); detail = j.error?.message || JSON.stringify(j); } catch { detail = await res.text(); }
-    throw new Error(`API ${res.status} — ${detail}`.slice(0, 200));
+  // --- barème %→lettre ---
+  const scaleRows = [];
+  const seenL = new Set();
+  const scaleRe = /(A\+|A-|B\+|B-|C\+|C-|D\+|D-|A|B|C|D|F)\s*[:=]?\s*(\d{1,3})(?:\s*(?:%|[-–]\s*\d{1,3}))?/g;
+  let sm;
+  while ((sm = scaleRe.exec(flat))) {
+    const L = sm[1], v = +sm[2];
+    if (!seenL.has(L) && v >= 0 && v <= 100) { seenL.add(L); scaleRows.push({ letter: L, min: v }); }
   }
-  const data = await res.json();
-  return (data.content || []).map((b) => b.text || "").join("").trim();
-}
+  const gradeScale = scaleRows.length >= 5 ? normalizeScale(scaleRows) : null;
 
-function parseJSONLoose(s) {
-  let t = s.trim();
-  if (t.startsWith("```")) t = t.replace(/^```(json)?/i, "").replace(/```$/, "").trim();
-  const a = t.indexOf("{"), b = t.lastIndexOf("}");
-  if (a > 0 || b < t.length - 1) t = t.slice(a, b + 1);
-  return JSON.parse(t);
+  // --- champs manquants à compléter ---
+  const missing = [];
+  if (!code) missing.push("Sigle du cours");
+  if (!comps.length) missing.push("Composantes et pondérations — rien détecté, à saisir à la main");
+  else {
+    const wsum = comps.reduce((s, c) => s + c.weight, 0);
+    if (Math.abs(wsum - 100) > 1) missing.push(`Pondérations à vérifier (total détecté : ${wsum} %)`);
+  }
+  if (credits === null) missing.push("Nombre de crédits");
+  if (comps.length && !comps.some((c) => c.items.length)) missing.push("Dates des travaux et examens");
+  if (!gradeScale) missing.push("Barème % → lettre (barème par défaut appliqué)");
+
+  return {
+    course: { code, title, instructor, email, room: "", officeHours: "", latePolicy: "", credits },
+    gradeScale,
+    components: comps.map((c) => ({ name: c.name, weight: c.weight, rule: c.rule, items: c.items })),
+    grades: [],
+    uncertain: [],
+    missing,
+  };
 }
 
 $("#import-analyze-btn").onclick = async () => {
-  if (!pendingFiles.length && !$("#import-text").value.trim()) { toast("Ajoute un fichier ou colle du texte"); return; }
-  if (!db.settings.apiKey) { toast("Ajoute ta clé API dans Réglages"); switchView("view-settings"); return; }
+  const pasted = $("#import-text").value.trim();
+  if (!pendingFiles.length && !pasted) { toast("Ajoute un fichier ou colle du texte"); return; }
   const status = $("#import-status");
   const review = $("#import-review");
   review.classList.add("hidden");
   status.classList.remove("hidden");
-  status.innerHTML = `<span class="spinner"></span> Analyse en cours…`;
+  status.innerHTML = `<span class="spinner"></span> Lecture du document…`;
   try {
-    const blocks = await buildContentBlocks();
-    const raw = await callClaude(EXTRACT_SYSTEM, blocks, 3000);
-    const data = parseJSONLoose(raw);
+    const parts = [];
+    if (pasted) parts.push(pasted);
+    for (const pf of pendingFiles) {
+      const t = pf.type || "";
+      if (t === "application/pdf" || pf.name.toLowerCase().endsWith(".pdf")) parts.push(await extractPdfText(pf.file));
+      else if (t.includes("wordprocessingml") || pf.name.toLowerCase().endsWith(".docx")) parts.push(await extractDocxText(pf.file));
+      else if (t.startsWith("image/")) throw new Error("Les photos ne sont pas lues (version gratuite). Utilise le PDF du syllabus ou copie-colle le texte.");
+      else parts.push(await pf.file.text());
+    }
+    const text = parts.join("\n\n");
+    if (text.replace(/\s/g, "").length < 15) throw new Error("Pas assez de texte à analyser.");
+    const data = parseSyllabusText(text);
     status.classList.add("hidden");
     renderReview(data);
   } catch (err) {
-    status.innerHTML = `<span class="bad">❌ ${esc(err.message)}</span>`;
+    status.innerHTML = `<span class="bad">⚠ ${esc(err.message)}</span>`;
   }
 };
 
@@ -1353,8 +1433,8 @@ const TUTO_STEPS = [
     body: `Ajoute les <strong>composantes</strong> (Devoirs 20%, Midterm 25%, Final 40%…) et entre tes notes en %. Le bloc « Note nécessaire » se recalcule seul, avec la fourchette min/max. Le barème % → lettre est ajustable par cours, et tu peux définir des règles « garde 4/5 » ou « retire la pire ».`,
   },
   {
-    emoji: "📄", title: "Import de documents",
-    body: `Dépose un <strong>syllabus</strong> (PDF, photo, .docx) ou un <strong>relevé de notes</strong> : Gradezilla lit le document et pré-remplit le cours. Ce qui manque est signalé en orange, à compléter à la main. Nécessite ta <strong>clé API Claude</strong> (Réglages).`,
+    emoji: "📄", title: "Import de syllabus",
+    body: `Colle le texte d'un <strong>syllabus</strong> ou dépose le <strong>PDF / .docx</strong>. Gradezilla repère le sigle, les composantes, les pondérations et le barème, puis pré-remplit le cours. Analyse <strong>locale et gratuite</strong> — c'est de la détection de motifs, donc vérifie le résultat et complète ce qui est signalé en orange.`,
   },
   {
     emoji: "📊", title: "Dates, GPA & sauvegarde",
